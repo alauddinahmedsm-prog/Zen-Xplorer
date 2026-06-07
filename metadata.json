@@ -1,0 +1,6 @@
+{
+  "name": "Zen Xplorer",
+  "description": "A professional-grade modern file explorer and local space analyzer with intelligent AI search and automatic categorization tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
