@@ -1,8 +1,10 @@
 package com.example.data.file
 
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -152,27 +154,70 @@ object ZenFileManager {
     )
 
     /**
-     * List all files in a given directory path
+     * List all files in a given directory path (with fallback to SAF and hidden files filtering)
      */
-    fun listFilesInDirectory(directory: File): List<FileItem> {
+    fun listFilesInDirectory(context: Context, directory: File): List<FileItem> {
         val fileItems = mutableListOf<FileItem>()
-        val files = directory.listFiles() ?: return emptyList()
-        for (f in files) {
-            val extension = f.extension
-            val isDir = f.isDirectory
-            val size = if (isDir) getFolderSize(f) else f.length()
-            val mime = getMimeType(f)
-            fileItems.add(
-                FileItem(
-                    name = f.name,
-                    path = f.absolutePath,
-                    isDirectory = isDir,
-                    size = size,
-                    lastModified = f.lastModified(),
-                    extension = extension,
-                    mimeType = mime
+        val prefs = context.getSharedPreferences("zen_prefs", Context.MODE_PRIVATE)
+        val showHiddenOn = prefs.getBoolean("show_hidden_files", false)
+
+        val files = directory.listFiles()
+        if (files != null) {
+            for (f in files) {
+                if (!showHiddenOn && f.name.startsWith(".")) {
+                    continue
+                }
+                val extension = f.extension
+                val isDir = f.isDirectory
+                val size = if (isDir) getFolderSize(f) else f.length()
+                val mime = getMimeType(f)
+                fileItems.add(
+                    FileItem(
+                        name = f.name,
+                        path = f.absolutePath,
+                        isDirectory = isDir,
+                        size = size,
+                        lastModified = f.lastModified(),
+                        extension = extension,
+                        mimeType = mime
+                    )
                 )
-            )
+            }
+        } else {
+            // Fallback: Check if there's a registered persistable SAF Tree URI
+            val safTreeUriStr = prefs.getString("saf_tree_uri", null)
+            if (safTreeUriStr != null) {
+                try {
+                    val treeUri = Uri.parse(safTreeUriStr)
+                    val documentFile = DocumentFile.fromTreeUri(context, treeUri)
+                    if (documentFile != null && documentFile.exists()) {
+                        val docFiles = documentFile.listFiles()
+                        for (df in docFiles) {
+                            val name = df.name ?: "Unnamed"
+                            if (!showHiddenOn && name.startsWith(".")) {
+                                continue
+                            }
+                            val isDir = df.isDirectory
+                            val size = df.length()
+                            val mime = df.type ?: (if (isDir) "folder" else "application/octet-stream")
+                            val ext = name.substringAfterLast('.', "")
+                            fileItems.add(
+                                FileItem(
+                                    name = name,
+                                    path = df.uri.toString(),
+                                    isDirectory = isDir,
+                                    size = size,
+                                    lastModified = df.lastModified(),
+                                    extension = ext,
+                                    mimeType = mime
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error listing files via Storage Access Framework fallback Uri", e)
+                }
+            }
         }
         // Directories first, then alphabetical list
         return fileItems.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))

@@ -105,8 +105,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _appPin = MutableStateFlow("1234") // Default setup PIN
     val appPin: StateFlow<String> = _appPin.asStateFlow()
 
+    private val prefs = application.getSharedPreferences("zen_prefs", Context.MODE_PRIVATE)
+
+    private val _welcomeCompleted = MutableStateFlow(prefs.getBoolean("welcome_completed", false))
+    val welcomeCompleted: StateFlow<Boolean> = _welcomeCompleted.asStateFlow()
+
+    fun completeWelcome() {
+        prefs.edit().putBoolean("welcome_completed", true).apply()
+        _welcomeCompleted.value = true
+    }
+
+    private val _isAppLockEnabled = MutableStateFlow(prefs.getBoolean("app_lock_enabled", false))
+    val isAppLockEnabled: StateFlow<Boolean> = _isAppLockEnabled.asStateFlow()
+
+    fun setAppLockEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("app_lock_enabled", enabled).apply()
+        _isAppLockEnabled.value = enabled
+        if (!enabled) {
+            _isAppLocked.value = false
+        }
+    }
+
     private val _isAppLocked = MutableStateFlow(false)
     val isAppLocked: StateFlow<Boolean> = _isAppLocked.asStateFlow()
+
+    private val _showHiddenFiles = MutableStateFlow(prefs.getBoolean("show_hidden_files", false))
+    val showHiddenFiles: StateFlow<Boolean> = _showHiddenFiles.asStateFlow()
+
+    fun setShowHiddenFiles(enabled: Boolean) {
+        prefs.edit().putBoolean("show_hidden_files", enabled).apply()
+        _showHiddenFiles.value = enabled
+        loadDirectory(_currentDir.value)
+    }
+
+    private val _safTreeUri = MutableStateFlow(prefs.getString("saf_tree_uri", null))
+    val safTreeUri: StateFlow<String?> = _safTreeUri.asStateFlow()
+
+    fun saveSafTreeUri(uri: String) {
+        prefs.edit().putString("saf_tree_uri", uri).apply()
+        _safTreeUri.value = uri
+        loadDirectory(_currentDir.value)
+    }
+
+    fun clearSafTreeUri() {
+        prefs.edit().remove("saf_tree_uri").apply()
+        _safTreeUri.value = null
+        loadDirectory(_currentDir.value)
+    }
+
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _storageError = MutableStateFlow<String?>(null)
+    val storageError: StateFlow<String?> = _storageError.asStateFlow()
 
     private val _isVaultLocked = MutableStateFlow(true)
     val isVaultLocked: StateFlow<Boolean> = _isVaultLocked.asStateFlow()
@@ -288,18 +339,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Directory loading
      */
     fun loadDirectory(dir: File) {
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        _currentDir.value = dir
-        viewModelScope.launch {
-            val fileItems = ZenFileManager.listFilesInDirectory(dir)
-            val updatedItems = fileItems.map { item ->
-                item.copy(isFavorite = repository.isFavorite(item.path))
-            }
-            _files.value = updatedItems
+        val app = getApplication<android.app.Application>()
+        val isDeviceStorage = ZenFileManager.getStorageType() == ZenFileManager.STORAGE_DEVICE
+        val hasStoragePerm = com.example.data.permission.PermissionManager.hasStoragePermission(app)
+
+        if (isDeviceStorage && !hasStoragePerm) {
+            // Do not scan or look at files before permission is granted
+            _files.value = emptyList()
             _selectedPaths.value = emptySet()
             _multiSelectMode.value = false
+            _storageError.value = "Storage permission required"
+            return
+        }
+
+        _isScanning.value = true
+        _storageError.value = null
+        _currentDir.value = dir
+
+        viewModelScope.launch {
+            try {
+                if (isDeviceStorage) {
+                    if (!dir.exists()) {
+                        try {
+                            if (!dir.mkdirs()) {
+                                _storageError.value = "Storage pathway is unavailable: ${dir.name}"
+                                _files.value = emptyList()
+                                return@launch
+                            }
+                        } catch (securityEx: SecurityException) {
+                            _storageError.value = "Access denied: ${securityEx.localizedMessage}"
+                            _files.value = emptyList()
+                            return@launch
+                        }
+                    }
+                } else {
+                    if (!dir.exists()) {
+                        dir.mkdirs()
+                    }
+                }
+
+                val fileItems = ZenFileManager.listFilesInDirectory(app, dir)
+                val updatedItems = fileItems.map { item ->
+                    item.copy(isFavorite = repository.isFavorite(item.path))
+                }
+                _files.value = updatedItems
+                _selectedPaths.value = emptySet()
+                _multiSelectMode.value = false
+            } catch (e: Exception) {
+                _storageError.value = "Failed accessing directory structure: ${e.localizedMessage}"
+                _files.value = emptyList()
+            } finally {
+                _isScanning.value = false
+            }
         }
     }
 

@@ -88,6 +88,8 @@ fun SettingsScreen(
 
     val context = LocalContext.current
     val isVaultLocked by viewModel.isVaultLocked.collectAsState()
+    val isAppLockEnabled by viewModel.isAppLockEnabled.collectAsState()
+    val showHiddenFiles by viewModel.showHiddenFiles.collectAsState()
     var showVaultUnlockPinDialog by remember { mutableStateOf(false) }
     var vaultPinInput by remember { mutableStateOf("") }
     var vaultPinError by remember { mutableStateOf<String?>(null) }
@@ -356,6 +358,24 @@ fun SettingsScreen(
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+                SettingsSwitchRow(
+                    title = "Enable App Lock on Launch",
+                    description = "Require the 4-digit security PIN on application start to prevent unauthorized entry.",
+                    checked = isAppLockEnabled,
+                    onCheckedChange = { viewModel.setAppLockEnabled(it) }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFF1E3A8A))
+
+                SettingsSwitchRow(
+                    title = "Show Hidden Files & Folders",
+                    description = "Show system/hidden files and folders starting with a period (.) in standard directories.",
+                    checked = showHiddenFiles,
+                    onCheckedChange = { viewModel.setShowHiddenFiles(it) }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFF1E3A8A))
+
                 SettingsActionRow(
                     title = "Setup Global PIN Applock",
                     description = "Change the 4-digit pass key that protects Zen Explorer vault containers.",

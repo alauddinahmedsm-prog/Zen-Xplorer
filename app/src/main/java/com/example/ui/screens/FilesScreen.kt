@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -86,6 +89,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -124,9 +128,31 @@ fun FilesScreen(
     val clipboardAction by viewModel.clipboardAction.collectAsState()
     val clipboardPaths by viewModel.clipboardPaths.collectAsState()
     val pinnedFolders by viewModel.pinnedFolders.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
+    val storageError by viewModel.storageError.collectAsState()
+    val safTreeUri by viewModel.safTreeUri.collectAsState()
 
     val currentScreen by viewModel.currentScreen.collectAsState()
     val searchFocusTrigger by viewModel.searchFocusTrigger.collectAsState()
+
+    val context = LocalContext.current
+    val storeType = ZenFileManager.getStorageType()
+    val hasStoragePermission = com.example.data.permission.PermissionManager.hasStoragePermission(context)
+
+    val openDocumentTreeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let {
+            try {
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(it, takeFlags)
+                viewModel.saveSafTreeUri(it.toString())
+                viewModel.showMessage("Folder loaded via Storage Access Framework!")
+            } catch (e: Exception) {
+                viewModel.showMessage("Failed to persist folder permission.")
+            }
+        }
+    }
 
     val screenFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
@@ -507,7 +533,130 @@ fun FilesScreen(
             }
 
             // MAIN CONTENT (List or Grid)
-            if (isAiSearching) {
+            if (storeType == ZenFileManager.STORAGE_DEVICE && !hasStoragePermission) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        border = BorderStroke(1.dp, Color(0xFF3B82F6).copy(alpha = 0.4f)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Info,
+                                contentDescription = "Storage Clearance Screen Icon",
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Storage Permission Required",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Storage permission is required to show your files. Please enable All Files Access for Zen Xplorer.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(
+                                onClick = {
+                                    try {
+                                        val intent = com.example.data.permission.PermissionManager.getManageFilesSettingIntent(context)
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        viewModel.showMessage("Failed to open settings. Please authorize storage path manually.")
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("enable_storage_access_btn")
+                            ) {
+                                Text("Enable Storage Access", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {
+                                    openDocumentTreeLauncher.launch(null)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                                border = BorderStroke(1.dp, Color(0xFF06B6D4).copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("choose_folder_saf_btn")
+                            ) {
+                                Text("Choose Specific Folder (SAF Fallback)", color = Color(0xFF06B6D4), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            } else if (isScanning) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            color = Color(0xFF3B82F6),
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Scanning directory structure...",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            } else if (storageError != null) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = "Error icon",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = storageError ?: "Workspace offline or storage pathway unavailable.",
+                            color = Color(0xFFEF4444),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else if (isAiSearching) {
                 Box(
                     modifier = Modifier
                         .weight(1f)

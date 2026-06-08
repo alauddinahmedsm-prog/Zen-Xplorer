@@ -76,6 +76,7 @@ import com.example.ui.screens.FilesScreen
 import com.example.ui.screens.MainDashboard
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StorageScreen
+import com.example.ui.screens.WelcomePermissionScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
@@ -118,32 +119,22 @@ fun MainContentHolder() {
     
     val snackbarHostState = remember { SnackbarHostState() }
 
+    val welcomeCompleted by viewModel.welcomeCompleted.collectAsState()
     val context = LocalContext.current
     var hasStoragePermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-            }
-        )
+        mutableStateOf(com.example.data.permission.PermissionManager.hasStoragePermission(context))
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    Environment.isExternalStorageManager()
-                } else {
-                    ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.READ_EXTERNAL_STORAGE
-                    ) == PackageManager.PERMISSION_GRANTED
+                val currentPerm = com.example.data.permission.PermissionManager.hasStoragePermission(context)
+                if (currentPerm && !hasStoragePermission) {
+                    viewModel.loadDirectory(viewModel.currentDir.value)
+                    viewModel.recomputeStorageStats()
                 }
+                hasStoragePermission = currentPerm
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -154,8 +145,13 @@ fun MainContentHolder() {
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        hasStoragePermission = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+    ) { _ ->
+        val currentPerm = com.example.data.permission.PermissionManager.hasStoragePermission(context)
+        if (currentPerm && !hasStoragePermission) {
+            viewModel.loadDirectory(viewModel.currentDir.value)
+            viewModel.recomputeStorageStats()
+        }
+        hasStoragePermission = currentPerm
     }
 
     // Transient splash state
@@ -164,8 +160,10 @@ fun MainContentHolder() {
     LaunchedEffect(Unit) {
         delay(2200) // Beautiful 2.2 second splash display
         showSplash = false
-        // Automatically activate lock screen to showcase PIN protection
-        viewModel.setAppLocked(true)
+        // Automatically activate lock screen to showcase PIN protection if enabled
+        if (viewModel.isAppLockEnabled.value) {
+            viewModel.setAppLocked(true)
+        }
     }
 
     // Reactive Operational Snackbar trigger
@@ -189,27 +187,11 @@ fun MainContentHolder() {
             SplashScreenView()
         } else if (isAppLocked) {
             LockScreenView(viewModel)
-        } else if (!hasStoragePermission) {
-            PermissionExplanationView(
-                onGrantClick = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        try {
-                            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                            context.startActivity(intent)
-                        }
-                    } else {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.READ_EXTERNAL_STORAGE,
-                                Manifest.permission.WRITE_EXTERNAL_STORAGE
-                            )
-                        )
-                    }
+        } else if (!welcomeCompleted) {
+            WelcomePermissionScreen(
+                viewModel = viewModel,
+                onContinueClick = {
+                    viewModel.completeWelcome()
                 }
             )
         } else {
@@ -487,70 +469,5 @@ data class NavigationItem(
     val icon: ImageVector
 )
 
-@Composable
-fun PermissionExplanationView(
-    onGrantClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0A1F44))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-            shape = RoundedCornerShape(24.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3B82F6).copy(alpha = 0.2f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 16.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "Permission requested indicator",
-                    tint = Color(0xFF06B6D4),
-                    modifier = Modifier.size(64.dp)
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "Storage Clearance Requested",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "To allow search indexing of files, secure database creation in the localized sandbox, and managing hidden vault credentials, Zen Xplorer requires authorization to access device storage folders.",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 20.sp
-                )
-                Spacer(modifier = Modifier.height(28.dp))
-                Button(
-                    onClick = onGrantClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                ) {
-                    Text(
-                        text = "Grant File Clearance Access",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-            }
-        }
-    }
-}
+
 
