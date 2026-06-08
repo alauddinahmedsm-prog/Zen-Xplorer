@@ -90,6 +90,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.LaunchedEffect
 import com.example.data.file.ZenFileManager
 import com.example.ui.components.AudioPlayerDialog
 import com.example.ui.components.ImageViewerDialog
@@ -114,6 +124,28 @@ fun FilesScreen(
     val clipboardAction by viewModel.clipboardAction.collectAsState()
     val clipboardPaths by viewModel.clipboardPaths.collectAsState()
     val pinnedFolders by viewModel.pinnedFolders.collectAsState()
+
+    val currentScreen by viewModel.currentScreen.collectAsState()
+    val searchFocusTrigger by viewModel.searchFocusTrigger.collectAsState()
+
+    val screenFocusRequester = remember { FocusRequester() }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == "files") {
+            try {
+                screenFocusRequester.requestFocus()
+            } catch (e: Exception) {}
+        }
+    }
+
+    LaunchedEffect(searchFocusTrigger) {
+        if (searchFocusTrigger > 0) {
+            try {
+                searchFocusRequester.requestFocus()
+            } catch (e: Exception) {}
+        }
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var useGridView by remember { mutableStateOf(false) }
@@ -156,7 +188,29 @@ fun FilesScreen(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .focusRequester(screenFocusRequester)
+            .focusable()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    if (keyEvent.isCtrlPressed && keyEvent.key == Key.F) {
+                        viewModel.triggerSearchFocus()
+                        true
+                    } else if (keyEvent.key == Key.Delete || keyEvent.key == Key.Backspace) {
+                        if (selectedPaths.isNotEmpty()) {
+                            viewModel.showDeleteConfirmationPrompt()
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            },
         containerColor = Color.Transparent,
         floatingActionButton = {
             if (!multiSelectMode) {
@@ -249,8 +303,7 @@ fun FilesScreen(
                             Icon(Icons.Filled.FolderZip, contentDescription = "Zip Selected", tint = Color(0xFF10B981))
                         }
                         IconButton(onClick = {
-                            selectedPaths.forEach { viewModel.deleteFile(it) }
-                            viewModel.clearSelection()
+                            viewModel.showDeleteConfirmationPrompt()
                         }) {
                             Icon(Icons.Filled.Delete, contentDescription = "Trash Selected", tint = Color(0xFFEF4444))
                         }
@@ -413,6 +466,7 @@ fun FilesScreen(
                         } else null,
                         modifier = Modifier
                             .weight(1f)
+                            .focusRequester(searchFocusRequester)
                             .testTag("workspace_search_input"),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true,
@@ -724,6 +778,69 @@ fun FilesScreen(
     }
 
     // DIALOGS CORES
+    val showDeleteConfirmation by viewModel.showDeleteConfirmation.collectAsState()
+
+    if (showDeleteConfirmation) {
+        Dialog(onDismissRequest = { viewModel.dismissDeleteConfirmation() }) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Confirm Deletion",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Confirm File Removal",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Are you sure you want to move ${selectedPaths.size} selected item(s) to the Recycle Bin?",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = { viewModel.dismissDeleteConfirmation() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Cancel", color = Color(0xFF94A3B8))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.confirmAndExecuteDeletion()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("delete_confirm_submit")
+                        ) {
+                            Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showCreateFolderDialog) {
         Dialog(onDismissRequest = { showCreateFolderDialog = false }) {
             Card(

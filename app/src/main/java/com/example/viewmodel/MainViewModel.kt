@@ -48,6 +48,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _clipboardPaths = MutableStateFlow<Set<String>>(emptySet())
     val clipboardPaths: StateFlow<Set<String>> = _clipboardPaths.asStateFlow()
 
+    // Keyboard shortcuts & Focus helpers
+    private val _searchFocusTrigger = MutableStateFlow(0)
+    val searchFocusTrigger: StateFlow<Int> = _searchFocusTrigger.asStateFlow()
+
+    private val _showDeleteConfirmation = MutableStateFlow(false)
+    val showDeleteConfirmation: StateFlow<Boolean> = _showDeleteConfirmation.asStateFlow()
+
     // Database reactive bindings
     val favorites: StateFlow<List<FileMetaEntity>> = repository.favoriteFiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -240,6 +247,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         current[folder] = !(current[folder] ?: true)
         _oneDriveSyncFolders.value = current
         showMessage("OneDrive: Sync for '$folder' ${if (current[folder] == true) "enabled" else "disabled"}")
+    }
+
+    // Keyboard shortcut operations
+    fun triggerSearchFocus() {
+        _searchFocusTrigger.value = _searchFocusTrigger.value + 1
+    }
+
+    fun showDeleteConfirmationPrompt() {
+        if (_selectedPaths.value.isNotEmpty()) {
+            _showDeleteConfirmation.value = true
+        } else {
+            showMessage("Select files to delete first")
+        }
+    }
+
+    fun dismissDeleteConfirmation() {
+        _showDeleteConfirmation.value = false
+    }
+
+    fun confirmAndExecuteDeletion() {
+        _showDeleteConfirmation.value = false
+        viewModelScope.launch {
+            val paths = _selectedPaths.value
+            if (paths.isNotEmpty()) {
+                paths.forEach { path ->
+                    val file = File(path)
+                    repository.moveToRecycleBin(file)
+                }
+                showMessage("Moved ${paths.size} item(s) to Recycle Bin")
+                _selectedPaths.value = emptySet()
+                _multiSelectMode.value = false
+                loadDirectory(_currentDir.value)
+                recomputeStorageStats()
+            }
+        }
     }
 
     /**
